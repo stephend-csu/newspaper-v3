@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Review Addresses</title>
+    <title>Confirmation Screen</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -12,26 +12,56 @@
             padding: 40px;
             margin: 0;
         }
-        h1 { font-weight: 300; }
+        h1, h2 { font-weight: 300; }
         .container {
-            max-width: 800px;
+            max-width: 900px;
             margin: 0 auto;
             background-color: #1e1e1e;
             padding: 30px;
             border-radius: 12px;
             box-shadow: 0 8px 16px rgba(0,0,0,0.5);
         }
+        .counts-bar {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 30px;
+            flex-wrap: wrap;
+        }
+        .badge {
+            background-color: #333;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 14px;
+            font-weight: bold;
+        }
+        .section {
+            margin-bottom: 40px;
+            padding: 20px;
+            background-color: #252525;
+            border-radius: 8px;
+        }
+        .section-header {
+            margin-top: 0;
+            border-bottom: 1px solid #444;
+            padding-bottom: 10px;
+            margin-bottom: 20px;
+        }
         .address-item {
             display: flex;
             align-items: center;
             margin-bottom: 15px;
             gap: 15px;
+            background-color: #1e1e1e;
+            padding: 10px;
+            border-radius: 6px;
         }
-        .papers {
-            font-weight: bold;
-            color: #888;
-            width: 100px;
+        .address-item.removed {
+            opacity: 0.5;
+            text-decoration: line-through;
         }
+        .index { width: 30px; color: #888; font-weight: bold; }
+        .papers { font-weight: bold; color: #aaa; width: 80px; }
+        .reason { font-size: 12px; color: #ffb703; width: 150px; }
         input[type="text"] {
             flex-grow: 1;
             padding: 10px;
@@ -41,12 +71,38 @@
             border-radius: 4px;
             font-size: 1em;
         }
+        .valid-addr-text {
+            flex-grow: 1;
+            padding: 10px;
+            cursor: pointer;
+        }
+        .city-text {
+            color: #888;
+            font-size: 0.9em;
+            margin-left: 10px;
+        }
+        .btn-small {
+            background-color: #444;
+            color: #fff;
+            border: none;
+            padding: 8px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.9em;
+            transition: background-color 0.2s;
+        }
+        .btn-small:hover { background-color: #555; }
+        .btn-valid { background-color: #2a9d8f; }
+        .btn-valid:hover { background-color: #21867a; }
+        .btn-remove { background-color: #e63946; }
+        .btn-remove:hover { background-color: #d62828; }
+        
         .btn {
             background-color: #e0e0e0;
             color: #121212;
             border: none;
-            padding: 12px 24px;
-            font-size: 1em;
+            padding: 15px 30px;
+            font-size: 1.1em;
             border-radius: 6px;
             cursor: pointer;
             transition: background-color 0.3s;
@@ -54,7 +110,8 @@
             width: 100%;
             margin-top: 20px;
         }
-        .btn:hover { background-color: #fff; }
+        .btn:hover:not(:disabled) { background-color: #fff; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .status {
             margin-top: 20px;
             padding: 15px;
@@ -70,82 +127,222 @@
 </head>
 <body>
     <div class="container">
-        <h1>Review Found Addresses</h1>
-        <p>Edit any addresses that look incorrect before processing.</p>
+        <h1>Confirmation Screen</h1>
         
-        <div id="addressList">
-            {% for item in addresses %}
-            <div class="address-item">
-                <div class="papers">{{ item.newspapers }}</div>
-                <input type="text" class="address-input" value="{{ item.address }}" data-papers="{{ item.newspapers }}" list="suggestions">
-            </div>
-            {% endfor %}
+        <div class="counts-bar" id="countsBar"></div>
+
+        <div class="section" id="problemSection" style="display: none;">
+            <h2 class="section-header">⚠ Problem Addresses</h2>
+            <div id="problemList"></div>
         </div>
-        
-        <datalist id="suggestions"></datalist>
+
+        <div class="section" id="doubtSection" style="display: none;">
+            <h2 class="section-header">⚡ Needs Review</h2>
+            <div id="doubtList"></div>
+        </div>
+
+        <div class="section" id="validSection" style="display: none;">
+            <h2 class="section-header">✓ Valid Addresses</h2>
+            <div id="validList"></div>
+        </div>
 
         <button class="btn" id="processBtn">Confirm & Process</button>
         <div id="statusMsg" class="status"></div>
     </div>
 
     <script>
-        // Very basic autocomplete using Nominatim
-        const inputs = document.querySelectorAll('.address-input');
-        const datalist = document.getElementById('suggestions');
-        let timeout = null;
+        var validAddresses = {{ valid | tojson }};
+        var doubtAddresses = {{ doubt | tojson }};
+        var problemAddresses = {{ problem | tojson }};
+        var newspaperCounts = {{ newspaper_counts | tojson }};
+        
+        let allAddresses = [];
+        let autoSuggestTimeouts = {};
 
-        inputs.forEach(input => {
-            input.addEventListener('input', (e) => {
-                clearTimeout(timeout);
-                const val = e.target.value;
-                if(val.length < 5) return;
+        function init() {
+            // Render counts
+            const countsBar = document.getElementById('countsBar');
+            for (const [paper, count] of Object.entries(newspaperCounts)) {
+                const b = document.createElement('div');
+                b.className = 'badge';
+                b.textContent = `${paper}: ${count}`;
+                countsBar.appendChild(b);
+            }
+
+            renderAll();
+            
+            document.getElementById('processBtn').addEventListener('click', submitData);
+        }
+
+        function createItem(item, listType, index) {
+            const div = document.createElement('div');
+            div.className = `address-item ${item.removed ? 'removed' : ''}`;
+            div.id = `item-${listType}-${index}`;
+            
+            const idxSpan = document.createElement('span');
+            idxSpan.className = 'index';
+            idxSpan.textContent = `${index + 1}.`;
+            
+            const papersSpan = document.createElement('span');
+            papersSpan.className = 'papers';
+            papersSpan.textContent = item.newspapers;
+            
+            div.appendChild(idxSpan);
+            div.appendChild(papersSpan);
+
+            if (listType === 'valid') {
+                const textDiv = document.createElement('div');
+                textDiv.className = 'valid-addr-text';
+                textDiv.innerHTML = `${item.address} <span class="city-text">${item.city || ''}</span>`;
+                textDiv.onclick = () => {
+                    item.isEditing = true;
+                    renderAll();
+                };
+                div.appendChild(textDiv);
                 
-                timeout = setTimeout(() => {
-                    fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(val + ', Contra Costa County, CA')}&format=json&limit=5`)
-                    .then(r => r.json())
-                    .then(data => {
-                        datalist.innerHTML = '';
-                        data.forEach(item => {
-                            let option = document.createElement('option');
-                            option.value = item.display_name.split(',')[0] + ', ' + item.display_name.split(',')[1];
-                            datalist.appendChild(option);
+                if (item.isEditing) {
+                    textDiv.innerHTML = '';
+                    const input = document.createElement('input');
+                    input.type = 'text';
+                    input.value = item.address;
+                    input.onblur = (e) => {
+                        item.address = e.target.value;
+                        item.isEditing = false;
+                        renderAll();
+                    };
+                    textDiv.appendChild(input);
+                    input.focus();
+                }
+
+                const invBtn = document.createElement('button');
+                invBtn.className = 'btn-small btn-remove';
+                invBtn.textContent = item.removed ? 'Restore' : 'Invalidate';
+                invBtn.onclick = () => {
+                    item.removed = !item.removed;
+                    renderAll();
+                };
+                div.appendChild(invBtn);
+            } else {
+                const inputWrap = document.createElement('div');
+                inputWrap.style.flexGrow = '1';
+                inputWrap.style.position = 'relative';
+
+                const input = document.createElement('input');
+                input.type = 'text';
+                input.value = item.address;
+                input.id = `input-${listType}-${index}`;
+                input.setAttribute('list', `dl-${listType}-${index}`);
+                
+                const dl = document.createElement('datalist');
+                dl.id = `dl-${listType}-${index}`;
+                
+                input.oninput = (e) => {
+                    item.address = e.target.value;
+                    clearTimeout(autoSuggestTimeouts[input.id]);
+                    autoSuggestTimeouts[input.id] = setTimeout(() => {
+                        fetch(`/suggest?q=${encodeURIComponent(e.target.value)}`)
+                        .then(r => r.json())
+                        .then(data => {
+                            dl.innerHTML = '';
+                            data.forEach(s => {
+                                const opt = document.createElement('option');
+                                opt.value = s;
+                                dl.appendChild(opt);
+                            });
                         });
-                    })
-                    .catch(err => console.log(err));
-                }, 500);
-            });
-        });
+                    }, 500);
+                };
+                
+                inputWrap.appendChild(input);
+                inputWrap.appendChild(dl);
+                div.appendChild(inputWrap);
 
-        document.getElementById('processBtn').addEventListener('click', () => {
-            const data = [];
-            document.querySelectorAll('.address-input').forEach(input => {
-                data.push({
-                    address: input.value,
-                    newspapers: input.getAttribute('data-papers')
-                });
+                const reasonSpan = document.createElement('span');
+                reasonSpan.className = 'reason';
+                reasonSpan.textContent = item.reason || '';
+                div.appendChild(reasonSpan);
+
+                const validBtn = document.createElement('button');
+                validBtn.className = 'btn-small btn-valid';
+                validBtn.textContent = 'Mark Valid';
+                validBtn.onclick = () => {
+                    item.status = 'valid';
+                    item.removed = false;
+                    validAddresses.push(item);
+                    if(listType === 'problem') problemAddresses.splice(index, 1);
+                    if(listType === 'doubt') doubtAddresses.splice(index, 1);
+                    renderAll();
+                };
+                div.appendChild(validBtn);
+
+                const rmBtn = document.createElement('button');
+                rmBtn.className = 'btn-small btn-remove';
+                rmBtn.textContent = item.removed ? 'Restore' : 'Remove';
+                rmBtn.onclick = () => {
+                    item.removed = !item.removed;
+                    renderAll();
+                };
+                div.appendChild(rmBtn);
+            }
+            return div;
+        }
+
+        function renderAll() {
+            const problemList = document.getElementById('problemList');
+            const doubtList = document.getElementById('doubtList');
+            const validList = document.getElementById('validList');
+            
+            problemList.innerHTML = '';
+            doubtList.innerHTML = '';
+            validList.innerHTML = '';
+
+            document.getElementById('problemSection').style.display = problemAddresses.length ? 'block' : 'none';
+            document.getElementById('doubtSection').style.display = doubtAddresses.length ? 'block' : 'none';
+            document.getElementById('validSection').style.display = validAddresses.length ? 'block' : 'none';
+
+            problemAddresses.forEach((item, i) => problemList.appendChild(createItem(item, 'problem', i)));
+            doubtAddresses.forEach((item, i) => doubtList.appendChild(createItem(item, 'doubt', i)));
+            validAddresses.forEach((item, i) => validList.appendChild(createItem(item, 'valid', i)));
+        }
+
+        function submitData() {
+            const finalAddresses = [];
+            [...validAddresses, ...doubtAddresses, ...problemAddresses].forEach(item => {
+                if (!item.removed && (item.status === 'valid' || validAddresses.includes(item))) {
+                    finalAddresses.push({
+                        address: item.address,
+                        newspapers: item.newspapers,
+                        lat: item.lat,
+                        lon: item.lon,
+                        city: item.city
+                    });
+                }
             });
 
-            document.getElementById('processBtn').disabled = true;
-            document.getElementById('processBtn').innerText = 'Processing...';
+            const btn = document.getElementById('processBtn');
+            btn.disabled = true;
+            btn.innerText = 'Processing...';
 
             fetch('/process', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ addresses: data })
+                body: JSON.stringify({ addresses: finalAddresses })
             })
             .then(r => r.json())
             .then(res => {
                 const status = document.getElementById('statusMsg');
-                status.innerText = res.message;
+                status.innerText = "Processing started. Chapters.csv will be updated on GitHub shortly.";
                 status.className = 'status success';
-                document.getElementById('processBtn').style.display = 'none';
+                btn.style.display = 'none';
             })
             .catch(err => {
                 alert('An error occurred.');
-                document.getElementById('processBtn').disabled = false;
-                document.getElementById('processBtn').innerText = 'Confirm & Process';
+                btn.disabled = false;
+                btn.innerText = 'Confirm & Process';
             });
-        });
+        }
+
+        init();
     </script>
 </body>
 </html>
