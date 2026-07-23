@@ -1,0 +1,87 @@
+"""
+Waypoint reordering demo using OSRM's free /trip endpoint.
+
+Real production call (this is the actual code you'd run):
+
+    import requests
+
+    coords = ";".join(f"{lon},{lat}" for lat, lon in points)
+    url = (
+        f"https://router.project-osrm.org/trip/v1/driving/{coords}"
+        f"?source=first&destination=last&roundtrip=false"
+        f"&continue_straight=false&overview=full&geometries=geojson"
+    )
+    resp = requests.get(url, timeout=10).json()
+    order = [wp["waypoint_index"] for wp in resp["waypoints"]]
+
+`continue_straight=false` is the key flag: it tells OSRM it's free to
+U-turn at any waypoint instead of being forced to keep going straight
+through an intersection, which is what causes those "drive around the
+block" loops.
+
+Since this sandbox can't reach the internet, the block below SIMULATES
+what that API call would return, using a nearest-neighbor + 2-opt pass
+over real driving-style straight-line (haversine) distances. Swap in
+the `requests.get(...)` block above to hit the live API for real.
+"""
+
+import math
+
+# 6 real geocoded Beverly Hills addresses (lat, lon)
+locations = [
+    ("Rodeo Drive",              34.0677919, -118.4016300),
+    ("Beverly Hills City Hall",  34.0730935, -118.4004388),
+    ("The Beverly Hills Hotel",  34.0818090, -118.4134030),
+    ("Greystone Mansion",        34.0921783, -118.4012868),
+    ("Beverly Gardens Park",     34.0723253, -118.4034489),
+    ("Beverly Hills High School",34.0614291, -118.4104884),
+]
+
+def haversine(a, b):
+    R = 3958.8  # miles
+    lat1, lon1 = math.radians(a[1]), math.radians(a[2])
+    lat2, lon2 = math.radians(b[1]), math.radians(b[2])
+    dlat, dlon = lat2 - lat1, lon2 - lon1
+    h = math.sin(dlat/2)**2 + math.cos(lat1)*math.cos(lat2)*math.sin(dlon/2)**2
+    return 2 * R * math.asin(math.sqrt(h))
+
+def route_length(order):
+    return sum(haversine(locations[order[i]], locations[order[i+1]])
+               for i in range(len(order) - 1))
+
+# --- simulate the /trip response: nearest-neighbor + 2-opt ---
+def nearest_neighbor(start=0):
+    unvisited = set(range(len(locations))) - {start}
+    order = [start]
+    while unvisited:
+        last = order[-1]
+        nxt = min(unvisited, key=lambda i: haversine(locations[last], locations[i]))
+        order.append(nxt)
+        unvisited.remove(nxt)
+    return order
+
+def two_opt(order):
+    best = order[:]
+    improved = True
+    while improved:
+        improved = False
+        for i in range(1, len(best) - 2):
+            for j in range(i + 1, len(best) - 1):
+                new_order = best[:i] + best[i:j+1][::-1] + best[j+1:]
+                if route_length(new_order) < route_length(best):
+                    best = new_order
+                    improved = True
+    return best
+
+original_order = list(range(len(locations)))
+optimized_order = two_opt(nearest_neighbor(start=0))
+
+print("BEFORE (as entered):")
+for i in original_order:
+    print(f"  {i+1}. {locations[i][0]}")
+print(f"  Total distance: {route_length(original_order):.2f} mi\n")
+
+print("AFTER (reordered by trip solver):")
+for i in optimized_order:
+    print(f"  {i+1}. {locations[i][0]}")
+print(f"  Total distance: {route_length(optimized_order):.2f} mi")

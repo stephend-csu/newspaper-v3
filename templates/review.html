@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Review Addresses</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #121212;
+            color: #e0e0e0;
+            padding: 40px;
+            margin: 0;
+        }
+        h1 { font-weight: 300; }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: #1e1e1e;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.5);
+        }
+        .address-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 15px;
+            gap: 15px;
+        }
+        .papers {
+            font-weight: bold;
+            color: #888;
+            width: 100px;
+        }
+        input[type="text"] {
+            flex-grow: 1;
+            padding: 10px;
+            background-color: #2a2a2a;
+            border: 1px solid #444;
+            color: #fff;
+            border-radius: 4px;
+            font-size: 1em;
+        }
+        .btn {
+            background-color: #e0e0e0;
+            color: #121212;
+            border: none;
+            padding: 12px 24px;
+            font-size: 1em;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            font-weight: 600;
+            width: 100%;
+            margin-top: 20px;
+        }
+        .btn:hover { background-color: #fff; }
+        .status {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 6px;
+            display: none;
+        }
+        .status.success {
+            background-color: #1b4332;
+            color: #95d5b2;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Review Found Addresses</h1>
+        <p>Edit any addresses that look incorrect before processing.</p>
+        
+        <div id="addressList">
+            {% for item in addresses %}
+            <div class="address-item">
+                <div class="papers">{{ item.newspapers }}</div>
+                <input type="text" class="address-input" value="{{ item.address }}" data-papers="{{ item.newspapers }}" list="suggestions">
+            </div>
+            {% endfor %}
+        </div>
+        
+        <datalist id="suggestions"></datalist>
+
+        <button class="btn" id="processBtn">Confirm & Process</button>
+        <div id="statusMsg" class="status"></div>
+    </div>
+
+    <script>
+        // Very basic autocomplete using Nominatim
+        const inputs = document.querySelectorAll('.address-input');
+        const datalist = document.getElementById('suggestions');
+        let timeout = null;
+
+        inputs.forEach(input => {
+            input.addEventListener('input', (e) => {
+                clearTimeout(timeout);
+                const val = e.target.value;
+                if(val.length < 5) return;
+                
+                timeout = setTimeout(() => {
+                    fetch(`https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(val + ', Contra Costa County, CA')}&format=json&limit=5`)
+                    .then(r => r.json())
+                    .then(data => {
+                        datalist.innerHTML = '';
+                        data.forEach(item => {
+                            let option = document.createElement('option');
+                            option.value = item.display_name.split(',')[0] + ', ' + item.display_name.split(',')[1];
+                            datalist.appendChild(option);
+                        });
+                    })
+                    .catch(err => console.log(err));
+                }, 500);
+            });
+        });
+
+        document.getElementById('processBtn').addEventListener('click', () => {
+            const data = [];
+            document.querySelectorAll('.address-input').forEach(input => {
+                data.push({
+                    address: input.value,
+                    newspapers: input.getAttribute('data-papers')
+                });
+            });
+
+            document.getElementById('processBtn').disabled = true;
+            document.getElementById('processBtn').innerText = 'Processing...';
+
+            fetch('/process', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ addresses: data })
+            })
+            .then(r => r.json())
+            .then(res => {
+                const status = document.getElementById('statusMsg');
+                status.innerText = res.message;
+                status.className = 'status success';
+                document.getElementById('processBtn').style.display = 'none';
+            })
+            .catch(err => {
+                alert('An error occurred.');
+                document.getElementById('processBtn').disabled = false;
+                document.getElementById('processBtn').innerText = 'Confirm & Process';
+            });
+        });
+    </script>
+</body>
+</html>
