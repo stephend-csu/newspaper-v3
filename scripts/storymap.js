@@ -7,7 +7,7 @@ $(window).on('load', function() {
   // First, try reading Options.csv
   $.get('csv/Options.csv', function(options) {
 
-    $.get('csv/Chapters.csv?time=' + Date.now(), function(chapters) {
+    $.get('csv/Chapters.csv', function(chapters) {
       initMap(
         $.csv.toObjects(options),
         $.csv.toObjects(chapters)
@@ -113,14 +113,6 @@ $(window).on('load', function() {
       $('#header').css('padding-top', '25px');
     }
 
-    // Fetch GitHub commit time for Chapters.csv
-    $.getJSON('https://api.github.com/repos/stephend-csu/newspaper-app-v2/commits?path=csv/Chapters.csv&page=1&per_page=1', function(data) {
-      if (data && data.length > 0) {
-        var date = new Date(data[0].commit.author.date);
-        var pstTime = date.toLocaleString("en-US", {timeZone: "America/Los_Angeles", dateStyle: 'medium', timeStyle: 'short'});
-        $('#header').append('<h3 style="font-weight: normal; margin-top: 5px; color: #888;">Updated: ' + pstTime + ' PST</h3>');
-      }
-    });
     // Load tiles
     addBaseMap();
 
@@ -154,27 +146,8 @@ $(window).on('load', function() {
     var overlay;  // URL of the overlay for in-focus chapter
     var geoJsonOverlay;
 
-    var routePolylines = []; // Array to store OSRM polylines
-
-    // Gather unique newspapers and missing addresses
-    var uniqueNewspapers = new Set();
-    var missingAddresses = [];
-    
     for (i in chapters) {
       var c = chapters[i];
-      if (c['Newspapers']) {
-        c['Newspapers'].split(' ').forEach(function(p) { if(p) uniqueNewspapers.add(p); });
-      }
-      if (c['Chapter'] && c['Chapter'].indexOf('(NOT FOUND)') > -1) {
-        missingAddresses.push(c['Chapter'].replace(' (NOT FOUND)', ''));
-      }
-    }
-
-    for (i in chapters) {
-      var c = chapters[i];
-
-      // Skip empty chapters and missing addresses in standard marker logic
-      if (!c['Chapter'] || c['Chapter'].indexOf('(NOT FOUND)') > -1) continue;
 
       if ( !isNaN(parseFloat(c['Latitude'])) && !isNaN(parseFloat(c['Longitude']))) {
         var lat = parseFloat(c['Latitude']);
@@ -283,74 +256,15 @@ $(window).on('load', function() {
         }).append(media).after(source);
       }
 
-      // Render Chapter Header with Title Case, No City, Maps Link, and Badges
-      var headerHTML = '';
-      if (i == 0) {
-        // Color Picker Div instead of standard start address
-        var colors = ['#f44336', '#e91e63', '#9c27b0', '#673ab7', '#3f51b5', '#2196f3', '#03a9f4', '#00bcd4', '#009688', '#4caf50', '#8bc34a', '#cddc39', '#ffeb3b', '#ffc107', '#ff9800', '#ff5722', '#795548', '#9e9e9e', '#607d8b', '#000000'];
-        var defaults = {'EBT': '#f44336', 'WSJ': '#9e9e9e', 'NYT': '#2196f3', 'SFC': '#ffeb3b'};
-        headerHTML += '<h3>Newspaper Colors</h3><div class="color-picker-container">';
-        uniqueNewspapers.forEach(function(paper) {
-          headerHTML += '<div class="color-row"><strong>' + paper + '</strong><div class="color-options">';
-          colors.forEach(function(color) {
-            var isSelected = (localStorage.getItem('color_' + paper) || defaults[paper] || colors[0]) === color;
-            headerHTML += '<div class="color-circle ' + (isSelected ? 'selected' : '') + '" style="background:' + color + '" data-paper="' + paper + '" data-color="' + color + '"></div>';
-          });
-          headerHTML += '</div></div>';
-        });
-        headerHTML += '</div>';
-
-        // Also add the Not Found div if applicable
-        if (missingAddresses.length > 0) {
-            headerHTML += '<div style="margin-top: 20px; border-top: 1px solid #ccc; padding-top: 20px;">';
-            headerHTML += '<h3>Could not find</h3><ul>';
-            missingAddresses.forEach(function(ma) {
-                headerHTML += '<li>' + ma + '</li>';
-            });
-            headerHTML += '</ul></div>';
-        }
-      } else {
-        var addressText = c['Chapter'].split(',')[0];
-        var formattedAddress = addressText.toLowerCase().split(' ').map(function(word) {
-          return (word.charAt(0).toUpperCase() + word.slice(1));
-        }).join(' ');
-        
-        headerHTML = '<p class="chapter-header"><a href="' + (c['Maps Link'] || '#') + '" target="_blank" style="color: inherit; text-decoration: none;">' + formattedAddress + '</a></p>';
-        
-        if (c['Newspapers']) {
-          var papers = c['Newspapers'].split(' ');
-          var paperHTML = '<div class="newspaper-badges">';
-          papers.forEach(function(p) {
-            var color = localStorage.getItem('color_' + p) || defaults[p] || '#9e9e9e';
-            // Simple logic to make background lighter
-            var lightColor = color + '40'; // Add 25% opacity for background
-            paperHTML += '<span class="newspaper-badge" style="background-color: ' + lightColor + '; color: ' + color + ';">' + p + '</span>';
-          });
-          paperHTML += '</div>';
-          headerHTML += paperHTML;
-        }
-      }
-
       container
-        .append(headerHTML)
+        .append('<p class="chapter-header">' + c['Chapter'] + '</p>')
         .append(media ? mediaContainer : '')
         .append(media ? source : '')
-        .append(i != 0 ? '<p class="description">' + c['Description'] + '</p>' : '');
+        .append('<p class="description">' + c['Description'] + '</p>');
 
       $('#contents').append(container);
 
     }
-
-    // Attach color picker events
-    $(document).on('click', '.color-circle', function() {
-        var paper = $(this).data('paper');
-        var color = $(this).data('color');
-        localStorage.setItem('color_' + paper, color);
-        $(this).parent().find('.color-circle').removeClass('selected');
-        $(this).addClass('selected');
-        // Refresh page to apply colors
-        window.location.reload();
-    });
 
     changeAttribution();
 
@@ -406,38 +320,33 @@ $(window).on('load', function() {
             map.removeLayer(geoJsonOverlay);
           }
 
-          // Clear previous routing polylines
-          routePolylines.forEach(function(pl) { map.removeLayer(pl); });
-          routePolylines = [];
-
-          // Draw routes using OSRM
-          var drawRoute = function(c1, c2, color) {
-            if (c1 && c2 && c1['Longitude'] && c1['Latitude'] && c2['Longitude'] && c2['Latitude']) {
-              var url = 'https://router.project-osrm.org/route/v1/driving/' + c1['Longitude'] + ',' + c1['Latitude'] + ';' + c2['Longitude'] + ',' + c2['Latitude'] + '?overview=full&geometries=geojson';
-              $.getJSON(url, function(data) {
-                if (data && data.routes && data.routes.length > 0) {
-                  var pl = L.geoJSON(data.routes[0].geometry, {
-                    style: { color: color, weight: 5, opacity: 0.7 }
-                  }).addTo(map);
-                  routePolylines.push(pl);
-                }
-              });
-            }
-          };
-
-          // Draw previous path (brown)
-          if (i > 0) {
-              drawRoute(chapters[i-1], chapters[i], '#795548'); // Brown
-          }
-          // Draw next path (blue)
-          if (i < chapters.length - 1) {
-              var nextChap = chapters[parseInt(i)+1];
-              if (nextChap && nextChap['Chapter'] && nextChap['Chapter'].indexOf('(NOT FOUND)') === -1) {
-                  drawRoute(chapters[i], nextChap, '#2196f3'); // Blue
-              }
-          }
-
           var c = chapters[i];
+
+          // Add chapter's overlay tiles if specified in options
+          if (c['Overlay']) {
+
+            var opacity = parseFloat(c['Overlay Transparency']) || 1;
+            var url = c['Overlay'];
+
+            if (url.split('.').pop() === 'geojson') {
+              $.getJSON(url, function(geojson) {
+                overlay = L.geoJson(geojson, {
+                  style: function(feature) {
+                    return {
+                      fillColor: feature.properties.fillColor || '#ffffff',
+                      weight: feature.properties.weight || 1,
+                      opacity: feature.properties.opacity || opacity,
+                      color: feature.properties.color || '#cccccc',
+                      fillOpacity: feature.properties.fillOpacity || 0.5,
+                    }
+                  }
+                }).addTo(map);
+              });
+            } else {
+              overlay = L.tileLayer(c['Overlay'], { opacity: opacity }).addTo(map);
+            }
+
+          }
 
           if (c['GeoJSON Overlay']) {
             $.getJSON(c['GeoJSON Overlay'], function(geojson) {
