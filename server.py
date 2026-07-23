@@ -133,51 +133,28 @@ def upload():
     if file and file.filename.endswith('.pdf'):
         raw_addresses = extract_addresses_from_pdf(file.stream)
         
-        valid_list = []
-        doubt_list = []
-        problem_list = []
         counts_dict = {}
-        
         for item in raw_addresses:
-            addr = item['address']
-            papers = item['newspapers']
-            
-            # Count newspapers
-            for p in papers.split():
+            for p in item['newspapers'].split():
                 if p:
                     counts_dict[p] = counts_dict.get(p, 0) + 1
-                    
-            val_res = validate_address(addr)
-            
-            result_item = {
-                "address": addr,
-                "city": val_res['city'],
-                "newspapers": papers,
-                "lat": val_res['lat'],
-                "lon": val_res['lon'],
-                "confidence": val_res['confidence'],
-                "reason": val_res['reason']
-            }
-            
-            if val_res['status'] == 'valid':
-                valid_list.append(result_item)
-            elif val_res['status'] == 'doubt':
-                doubt_list.append(result_item)
-            else:
-                problem_list.append(result_item)
-                
-        # Select 2-3 lowest confidence for doubt (if doubt has space)
-        # Any 'medium' from valid could be moved to doubt if doubt list is empty
-        # But instructions: "Select 2-3 lowest confidence addresses for the doubt section"
-        all_found = valid_list + doubt_list
-        all_found.sort(key=lambda x: {"low": 1, "medium": 2, "high": 3}.get(x['confidence'], 4))
         
-        doubt_list = all_found[:3] if len(all_found) >= 3 else all_found
-        valid_list = [x for x in all_found if x not in doubt_list]
-        
-        return render_template('review.html', valid=valid_list, doubt=doubt_list, problem=problem_list, newspaper_counts=counts_dict)
+        # Return immediately with unvalidated addresses — validation happens client-side
+        return render_template('review.html',
+            raw_addresses=raw_addresses,
+            newspaper_counts=counts_dict)
         
     return "Invalid file format. Please upload a PDF.", 400
+
+@app.route('/validate-address', methods=['POST'])
+def validate_address_endpoint():
+    """Validate a single address via dual-API. Called by client-side JS one at a time."""
+    data = request.json
+    addr = data.get('address', '')
+    if not addr:
+        return jsonify({"status": "problem", "city": "", "lat": None, "lon": None, "confidence": "none", "reason": "Empty address"})
+    result = validate_address(addr)
+    return jsonify(result)
 
 @app.route('/suggest')
 def suggest():

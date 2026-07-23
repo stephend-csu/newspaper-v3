@@ -9,7 +9,7 @@
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background-color: #121212;
             color: #e0e0e0;
-            padding: 40px;
+            padding: 20px;
             margin: 0;
         }
         h1, h2 { font-weight: 300; }
@@ -24,7 +24,7 @@
         .counts-bar {
             display: flex;
             gap: 15px;
-            margin-bottom: 30px;
+            margin-bottom: 20px;
             flex-wrap: wrap;
         }
         .badge {
@@ -34,8 +34,27 @@
             font-size: 14px;
             font-weight: bold;
         }
+        .progress-bar-container {
+            background-color: #333;
+            border-radius: 8px;
+            height: 8px;
+            margin-bottom: 25px;
+            overflow: hidden;
+        }
+        .progress-bar-fill {
+            background-color: #4caf50;
+            height: 100%;
+            width: 0%;
+            transition: width 0.3s ease;
+            border-radius: 8px;
+        }
+        .progress-text {
+            font-size: 0.9em;
+            color: #888;
+            margin-bottom: 8px;
+        }
         .section {
-            margin-bottom: 40px;
+            margin-bottom: 30px;
             padding: 20px;
             background-color: #252525;
             border-radius: 8px;
@@ -49,21 +68,28 @@
         .address-item {
             display: flex;
             align-items: center;
-            margin-bottom: 15px;
-            gap: 15px;
+            margin-bottom: 10px;
+            gap: 10px;
             background-color: #1e1e1e;
             padding: 10px;
             border-radius: 6px;
+            flex-wrap: wrap;
         }
         .address-item.removed {
-            opacity: 0.5;
+            opacity: 0.4;
             text-decoration: line-through;
         }
-        .index { width: 30px; color: #888; font-weight: bold; }
-        .papers { font-weight: bold; color: #aaa; width: 80px; }
-        .reason { font-size: 12px; color: #ffb703; width: 150px; }
+        .index { width: 30px; color: #888; font-weight: bold; flex-shrink: 0; }
+        .papers { font-weight: bold; color: #aaa; width: 80px; flex-shrink: 0; }
+        .reason { font-size: 12px; color: #ffb703; flex-shrink: 0; max-width: 160px; }
+        .status-indicator { font-size: 12px; flex-shrink: 0; }
+        .status-pending { color: #888; }
+        .status-valid { color: #4caf50; }
+        .status-doubt { color: #ffb703; }
+        .status-problem { color: #e63946; }
         input[type="text"] {
             flex-grow: 1;
+            min-width: 150px;
             padding: 10px;
             background-color: #2a2a2a;
             border: 1px solid #444;
@@ -75,6 +101,7 @@
             flex-grow: 1;
             padding: 10px;
             cursor: pointer;
+            min-width: 150px;
         }
         .city-text {
             color: #888;
@@ -88,15 +115,16 @@
             padding: 8px 12px;
             border-radius: 4px;
             cursor: pointer;
-            font-size: 0.9em;
+            font-size: 0.85em;
             transition: background-color 0.2s;
+            flex-shrink: 0;
         }
         .btn-small:hover { background-color: #555; }
         .btn-valid { background-color: #2a9d8f; }
         .btn-valid:hover { background-color: #21867a; }
         .btn-remove { background-color: #e63946; }
         .btn-remove:hover { background-color: #d62828; }
-        
+
         .btn {
             background-color: #e0e0e0;
             color: #121212;
@@ -128,8 +156,13 @@
 <body>
     <div class="container">
         <h1>Confirmation Screen</h1>
-        
+
         <div class="counts-bar" id="countsBar"></div>
+
+        <div class="progress-text" id="progressText">Validating addresses...</div>
+        <div class="progress-bar-container">
+            <div class="progress-bar-fill" id="progressBar"></div>
+        </div>
 
         <div class="section" id="problemSection" style="display: none;">
             <h2 class="section-header">⚠ Problem Addresses</h2>
@@ -146,78 +179,130 @@
             <div id="validList"></div>
         </div>
 
-        <button class="btn" id="processBtn">Confirm & Process</button>
+        <button class="btn" id="processBtn" disabled>Validating...</button>
         <div id="statusMsg" class="status"></div>
     </div>
 
     <script>
-        var validAddresses = {{ valid | tojson }};
-        var doubtAddresses = {{ doubt | tojson }};
-        var problemAddresses = {{ problem | tojson }};
+        var rawAddresses = {{ raw_addresses | tojson }};
         var newspaperCounts = {{ newspaper_counts | tojson }};
-        
-        let allAddresses = [];
-        let autoSuggestTimeouts = {};
+
+        var validAddresses = [];
+        var doubtAddresses = [];
+        var problemAddresses = [];
+        var autoSuggestTimeouts = {};
 
         function init() {
-            // Render counts
+            // Render newspaper counts
             const countsBar = document.getElementById('countsBar');
             for (const [paper, count] of Object.entries(newspaperCounts)) {
                 const b = document.createElement('div');
                 b.className = 'badge';
-                b.textContent = `${paper}: ${count}`;
+                b.textContent = paper + ': ' + count;
                 countsBar.appendChild(b);
             }
 
+            // Start progressive validation
+            validateAllAddresses();
+        }
+
+        async function validateAllAddresses() {
+            const total = rawAddresses.length;
+            let done = 0;
+
+            for (let i = 0; i < rawAddresses.length; i++) {
+                const item = rawAddresses[i];
+                const progressText = document.getElementById('progressText');
+                progressText.textContent = 'Validating ' + (i + 1) + ' of ' + total + ': ' + item.address + '...';
+
+                try {
+                    const resp = await fetch('/validate-address', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ address: item.address })
+                    });
+                    const result = await resp.json();
+
+                    const enriched = {
+                        address: item.address,
+                        newspapers: item.newspapers,
+                        city: result.city || '',
+                        lat: result.lat,
+                        lon: result.lon,
+                        confidence: result.confidence,
+                        reason: result.reason,
+                        status: result.status
+                    };
+
+                    if (result.status === 'valid') {
+                        validAddresses.push(enriched);
+                    } else if (result.status === 'doubt') {
+                        doubtAddresses.push(enriched);
+                    } else {
+                        problemAddresses.push(enriched);
+                    }
+                } catch (err) {
+                    problemAddresses.push({
+                        address: item.address,
+                        newspapers: item.newspapers,
+                        city: '',
+                        lat: null, lon: null,
+                        confidence: 'none',
+                        reason: 'Validation request failed',
+                        status: 'problem'
+                    });
+                }
+
+                done++;
+                document.getElementById('progressBar').style.width = ((done / total) * 100) + '%';
+            }
+
+            // Move 2-3 lowest-confidence valid addresses to doubt
+            var allFound = validAddresses.concat(doubtAddresses);
+            var confOrder = { 'low': 1, 'medium': 2, 'high': 3 };
+            allFound.sort(function(a, b) {
+                return (confOrder[a.confidence] || 4) - (confOrder[b.confidence] || 4);
+            });
+
+            var newDoubt = allFound.slice(0, Math.min(3, allFound.length));
+            var newValid = allFound.filter(function(x) { return newDoubt.indexOf(x) === -1; });
+            doubtAddresses = newDoubt;
+            validAddresses = newValid;
+
+            // Done validating
+            document.getElementById('progressText').textContent = 'Validation complete — ' + validAddresses.length + ' valid, ' + doubtAddresses.length + ' to review, ' + problemAddresses.length + ' problems';
+            document.getElementById('processBtn').disabled = false;
+            document.getElementById('processBtn').textContent = 'Confirm & Process';
+
             renderAll();
-            
-            document.getElementById('processBtn').addEventListener('click', submitData);
         }
 
         function createItem(item, listType, index) {
             const div = document.createElement('div');
-            div.className = `address-item ${item.removed ? 'removed' : ''}`;
-            div.id = `item-${listType}-${index}`;
-            
+            div.className = 'address-item' + (item.removed ? ' removed' : '');
+
             const idxSpan = document.createElement('span');
             idxSpan.className = 'index';
-            idxSpan.textContent = `${index + 1}.`;
-            
+            idxSpan.textContent = (index + 1) + '.';
+
             const papersSpan = document.createElement('span');
             papersSpan.className = 'papers';
             papersSpan.textContent = item.newspapers;
-            
+
             div.appendChild(idxSpan);
             div.appendChild(papersSpan);
 
             if (listType === 'valid') {
                 const textDiv = document.createElement('div');
                 textDiv.className = 'valid-addr-text';
-                textDiv.innerHTML = `${item.address} <span class="city-text">${item.city || ''}</span>`;
-                textDiv.onclick = () => {
-                    item.isEditing = true;
-                    renderAll();
-                };
+                textDiv.innerHTML = item.address + ' <span class="city-text">' + (item.city || '') + '</span>';
+
                 div.appendChild(textDiv);
-                
-                if (item.isEditing) {
-                    textDiv.innerHTML = '';
-                    const input = document.createElement('input');
-                    input.type = 'text';
-                    input.value = item.address;
-                    input.onblur = (e) => {
-                        item.address = e.target.value;
-                        item.isEditing = false;
-                        renderAll();
-                    };
-                    textDiv.appendChild(input);
-                    input.focus();
-                }
 
                 const invBtn = document.createElement('button');
                 invBtn.className = 'btn-small btn-remove';
                 invBtn.textContent = item.removed ? 'Restore' : 'Invalidate';
-                invBtn.onclick = () => {
+                invBtn.onclick = function() {
                     item.removed = !item.removed;
                     renderAll();
                 };
@@ -225,34 +310,34 @@
             } else {
                 const inputWrap = document.createElement('div');
                 inputWrap.style.flexGrow = '1';
-                inputWrap.style.position = 'relative';
+                inputWrap.style.minWidth = '150px';
 
                 const input = document.createElement('input');
                 input.type = 'text';
                 input.value = item.address;
-                input.id = `input-${listType}-${index}`;
-                input.setAttribute('list', `dl-${listType}-${index}`);
-                
+                input.id = 'input-' + listType + '-' + index;
+                input.setAttribute('list', 'dl-' + listType + '-' + index);
+
                 const dl = document.createElement('datalist');
-                dl.id = `dl-${listType}-${index}`;
-                
-                input.oninput = (e) => {
+                dl.id = 'dl-' + listType + '-' + index;
+
+                input.oninput = function(e) {
                     item.address = e.target.value;
                     clearTimeout(autoSuggestTimeouts[input.id]);
-                    autoSuggestTimeouts[input.id] = setTimeout(() => {
-                        fetch(`/suggest?q=${encodeURIComponent(e.target.value)}`)
-                        .then(r => r.json())
-                        .then(data => {
+                    autoSuggestTimeouts[input.id] = setTimeout(function() {
+                        fetch('/suggest?q=' + encodeURIComponent(e.target.value))
+                        .then(function(r) { return r.json(); })
+                        .then(function(data) {
                             dl.innerHTML = '';
-                            data.forEach(s => {
-                                const opt = document.createElement('option');
+                            data.forEach(function(s) {
+                                var opt = document.createElement('option');
                                 opt.value = s;
                                 dl.appendChild(opt);
                             });
                         });
                     }, 500);
                 };
-                
+
                 inputWrap.appendChild(input);
                 inputWrap.appendChild(dl);
                 div.appendChild(inputWrap);
@@ -265,12 +350,12 @@
                 const validBtn = document.createElement('button');
                 validBtn.className = 'btn-small btn-valid';
                 validBtn.textContent = 'Mark Valid';
-                validBtn.onclick = () => {
+                validBtn.onclick = function() {
                     item.status = 'valid';
                     item.removed = false;
                     validAddresses.push(item);
-                    if(listType === 'problem') problemAddresses.splice(index, 1);
-                    if(listType === 'doubt') doubtAddresses.splice(index, 1);
+                    if (listType === 'problem') problemAddresses.splice(index, 1);
+                    if (listType === 'doubt') doubtAddresses.splice(index, 1);
                     renderAll();
                 };
                 div.appendChild(validBtn);
@@ -278,7 +363,7 @@
                 const rmBtn = document.createElement('button');
                 rmBtn.className = 'btn-small btn-remove';
                 rmBtn.textContent = item.removed ? 'Restore' : 'Remove';
-                rmBtn.onclick = () => {
+                rmBtn.onclick = function() {
                     item.removed = !item.removed;
                     renderAll();
                 };
@@ -291,7 +376,7 @@
             const problemList = document.getElementById('problemList');
             const doubtList = document.getElementById('doubtList');
             const validList = document.getElementById('validList');
-            
+
             problemList.innerHTML = '';
             doubtList.innerHTML = '';
             validList.innerHTML = '';
@@ -300,15 +385,16 @@
             document.getElementById('doubtSection').style.display = doubtAddresses.length ? 'block' : 'none';
             document.getElementById('validSection').style.display = validAddresses.length ? 'block' : 'none';
 
-            problemAddresses.forEach((item, i) => problemList.appendChild(createItem(item, 'problem', i)));
-            doubtAddresses.forEach((item, i) => doubtList.appendChild(createItem(item, 'doubt', i)));
-            validAddresses.forEach((item, i) => validList.appendChild(createItem(item, 'valid', i)));
+            problemAddresses.forEach(function(item, i) { problemList.appendChild(createItem(item, 'problem', i)); });
+            doubtAddresses.forEach(function(item, i) { doubtList.appendChild(createItem(item, 'doubt', i)); });
+            validAddresses.forEach(function(item, i) { validList.appendChild(createItem(item, 'valid', i)); });
         }
 
         function submitData() {
             const finalAddresses = [];
-            [...validAddresses, ...doubtAddresses, ...problemAddresses].forEach(item => {
-                if (!item.removed && (item.status === 'valid' || validAddresses.includes(item))) {
+            var all = validAddresses.concat(doubtAddresses).concat(problemAddresses);
+            all.forEach(function(item) {
+                if (!item.removed && (item.status === 'valid' || validAddresses.indexOf(item) !== -1)) {
                     finalAddresses.push({
                         address: item.address,
                         newspapers: item.newspapers,
@@ -328,20 +414,21 @@
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ addresses: finalAddresses })
             })
-            .then(r => r.json())
-            .then(res => {
+            .then(function(r) { return r.json(); })
+            .then(function(res) {
                 const status = document.getElementById('statusMsg');
                 status.innerText = "Processing started. Chapters.csv will be updated on GitHub shortly.";
                 status.className = 'status success';
                 btn.style.display = 'none';
             })
-            .catch(err => {
+            .catch(function(err) {
                 alert('An error occurred.');
                 btn.disabled = false;
                 btn.innerText = 'Confirm & Process';
             });
         }
 
+        document.getElementById('processBtn').addEventListener('click', submitData);
         init();
     </script>
 </body>
