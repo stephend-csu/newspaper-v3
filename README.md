@@ -7,7 +7,7 @@ Supports images, audio and video embeddings, and Leaflet TileLayer/geojson overl
 </p>
 
 ## Live links (replace with your own)
-- Leaflet Map https://stephend-csu.github.io/newspaper-app-v2/
+- Leaflet Map https://github.com/stephend-csu/newspaper-v3
 - Google Sheets template https://docs.google.com/spreadsheets/d/1NpBAdynPVo8UxTRLx5-zUFcYvMQA1iyXjF8veGS53Cw/edit?gid=0#gid=0
 
 ## Create Your Own
